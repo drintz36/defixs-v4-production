@@ -1,8 +1,12 @@
 import { defineConfig } from 'vite'
 import tailwindcss from '@tailwindcss/vite'
 
-// https://vite.dev/config/
 export default defineConfig({
   plugins: [tailwindcss()],
-  base: "/defix-v1/",
+  base: "/defix-v2/",
+  server: {
+    proxy: {
+      '/api': 'http://localhost:3000'
+    }
+  }
 })

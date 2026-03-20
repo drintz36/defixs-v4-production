@@ -324,7 +324,7 @@ btnDebug.addEventListener('click', async () => {
   outputLoading.classList.remove('hidden');
 
   try {
-    const res = await fetch('http://localhost:3000/api/debug', {
+    const res = await fetch('/api/debug', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ buggyCode: code, language: selectedLanguage })

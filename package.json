@@ -8,6 +8,8 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "start": "node server/server.js",
+    "postinstall": "cd server && npm install",
     "predeploy": "npm run build",
     "deploy": "gh-pages -d dist"
   },

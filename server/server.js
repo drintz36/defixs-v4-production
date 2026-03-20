@@ -2,9 +2,14 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Load environment variables from .env file
-dotenv.config();
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -71,6 +76,14 @@ ${buggyCode}
 });
 
 // Start the server
+// Serve static frontend in production
+app.use(express.static(path.join(__dirname, '../dist')));
+
+// Route all other requests to the frontend
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../dist/index.html'));
+});
+
 app.listen(port, () => {
-  console.log(`DeFix backend running on http://localhost:${port}`);
+  console.log(`DeFix unified backend/frontend running on port ${port}`);
 });
