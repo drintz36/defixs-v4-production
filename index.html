@@ -180,12 +180,22 @@
       </div>
 
       <div id="error-banner"
-        class="hidden bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 flex items-start gap-3 text-red-700 dark:text-red-400">
+        class="hidden bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 flex items-start gap-3 justify-center mb-6 text-red-700 dark:text-red-400">
         <i data-lucide="alert-circle" class="w-5 h-5 shrink-0 mt-0.5"></i>
         <div>
           <h3 class="font-semibold text-sm">Failed to debug code</h3>
           <p id="error-message" class="text-sm opacity-90"></p>
         </div>
+      </div>
+
+      <!-- Debug Workspace Title -->
+      <div class="w-full flex flex-col items-center justify-center text-center mb-6 mt-4" data-aos="fade-up" data-aos-delay="550">
+        <h2 class="text-2xl md:text-3xl font-extrabold text-[var(--color-primary-500)] tracking-tight uppercase tracking-wide">
+          Interactive AI Debugger
+        </h2>
+        <p class="text-sm text-gray-500 dark:text-gray-400 font-medium mt-2 max-w-xl">
+          Enter your buggy code in the editor, pick a language, and review the fixed output and step-by-step analysis.
+        </p>
       </div>
 
       <!-- Editor Section (Ported from CodeEditor.jsx) -->
