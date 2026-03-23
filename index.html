@@ -260,7 +260,7 @@
               <span id="copy-text">Copy</span>
             </button>
           </div>
-          <div class="flex-1 overflow-auto p-4 md:p-6 relative">
+          <div class="flex-1 relative w-full h-full overflow-hidden [&_.cm-editor]:h-[100%] [&_.cm-scroller]:overflow-auto [&_.cm-editor.cm-focused]:outline-none">
             <div id="output-loading"
               class="hidden absolute inset-0 flex flex-col items-center justify-center bg-gray-50/80 dark:bg-[var(--color-bg-dark)]/80 backdrop-blur-sm z-10 transition-all">
               <div
@@ -268,10 +268,11 @@
               </div>
               <p class="text-[13px] font-medium text-gray-500 dark:text-gray-400 tracking-tight">Generating fix...</p>
             </div>
-            <pre id="output-pre"
-              class="hidden font-mono text-[13px] leading-relaxed text-gray-800 dark:text-gray-300 whitespace-pre font-medium p-0 m-0"><code id="output-code"></code></pre>
+            
+            <div id="output-editor-wrapper" class="hidden absolute inset-0 w-full h-full"></div>
+            
             <div id="output-empty"
-              class="h-full flex flex-col items-center justify-center text-gray-400 dark:text-gray-600 opacity-60">
+              class="absolute inset-0 flex flex-col items-center justify-center text-gray-400 dark:text-gray-600 opacity-60">
               <span class="font-mono text-[13px] tracking-tight">No output yet //</span>
             </div>
           </div>

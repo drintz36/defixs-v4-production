@@ -139,12 +139,27 @@ const inputEditor = new EditorView({
 const btnCopy = document.getElementById('btn-copy');
 const copyIcon = document.getElementById('copy-icon');
 const copyTextEle = document.getElementById('copy-text');
-const outputPre = document.getElementById('output-pre');
-const outputCodeEle = document.getElementById('output-code');
+const outputEditorWrapper = document.getElementById('output-editor-wrapper');
 const outputEmpty = document.getElementById('output-empty');
 const outputLoading = document.getElementById('output-loading');
 
 let lastGeneratedCode = "";
+
+const outputState = EditorState.create({
+  doc: "",
+  extensions: [
+    basicSetup,
+    javascript(),
+    activeTheme,
+    EditorView.lineWrapping,
+    EditorState.readOnly.of(true)
+  ]
+});
+
+const outputEditor = new EditorView({
+  state: outputState,
+  parent: document.getElementById('output-editor-wrapper')
+});
 
 if (btnCopy) {
   btnCopy.addEventListener('click', () => {
@@ -319,7 +334,7 @@ btnDebug.addEventListener('click', async () => {
   `;
 
   outputEmpty.classList.add('hidden');
-  outputPre.classList.add('hidden');
+  outputEditorWrapper.classList.add('hidden');
   outputLoading.classList.remove('hidden');
 
   try {
@@ -346,10 +361,18 @@ btnDebug.addEventListener('click', async () => {
 
     // Set Output Panel
     lastGeneratedCode = data.fixed_code || '';
-    outputCodeEle.innerText = lastGeneratedCode;
+    
+    // Update the CodeMirror instance safely without recreating
+    outputEditor.dispatch({
+      changes: {
+        from: 0,
+        to: outputEditor.state.doc.length,
+        insert: lastGeneratedCode
+      }
+    });
 
     outputLoading.classList.add('hidden');
-    outputPre.classList.remove('hidden');
+    outputEditorWrapper.classList.remove('hidden');
 
     if (data.analysis) {
       const { issues, how_to_fix, suggestions } = data.analysis;
@@ -388,7 +411,7 @@ btnDebug.addEventListener('click', async () => {
     explanationContent.classList.add('hidden');
 
     outputLoading.classList.add('hidden');
-    outputPre.classList.add('hidden');
+    outputEditorWrapper.classList.add('hidden');
     outputEmpty.classList.remove('hidden');
   } finally {
     btnDebug.disabled = false;
