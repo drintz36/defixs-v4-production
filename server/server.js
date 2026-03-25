@@ -30,7 +30,7 @@ app.post('/api/debug', async (req, res) => {
     }
 
     const languageContext = language ? `The code is written in ${language}.\n` : '';
-    const prompt = `Act as a warm, legendary Polyglot Senior Developer and Mentor. You are a world-class expert in ${language || "countless programming languages"}.
+    const prompt = `Act as a warm, legendary Polyglot Senior Developer and Mentor with 10+ years of experience. You are a world-class expert in ${language || "countless programming languages"}.
 Your mission is to guide a junior student ("from absolute zero") by providing **Premium Code Analysis** that is both deeply technical and incredibly simple to understand.
 
 STRICT RULE: Return ONLY a valid JSON object. No markdown.
