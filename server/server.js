@@ -1,7 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { GoogleGenAI, Type } from '@google/genai';
+import Groq from 'groq-sdk';
+import { GoogleGenAI } from '@google/genai';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -16,7 +17,9 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// Initialize AI Clients
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const genAI = new GoogleGenAI(process.env.GEMINI_API_KEY);
 
 app.post('/api/debug', async (req, res) => {
   try {
@@ -27,84 +30,108 @@ app.post('/api/debug', async (req, res) => {
     }
 
     const languageContext = language ? `The code is written in ${language}.\n` : '';
-    const prompt = `Act as a Senior Full-Stack Developer with 10+ years of experience. You are the analysis engine for Defix-v2.
+    const prompt = `Act as a warm, legendary Polyglot Senior Developer and Mentor. You are a world-class expert in ${language || "countless programming languages"}.
+Your mission is to guide a junior student ("from absolute zero") by providing **Premium Code Analysis** that is both deeply technical and incredibly simple to understand.
 
-STRICT RULE: Return ONLY a valid JSON object. No markdown, no backticks.
+STRICT RULE: Return ONLY a valid JSON object. No markdown.
 
 JSON STRUCTURE:
 {
   "fixed_code": "Full corrected code here",
   "analysis": {
-    "issues": ["Detailed text here", "Detailed text here"],
-    "how_to_fix": ["Detailed text here", "Detailed text here"],
-    "suggestions": ["Detailed text here", "Detailed text here"]
+    "issues": ["Mentorship Report"],
+    "how_to_fix": ["Mentorship Report"],
+    "suggestions": ["Mentorship Report"]
   }
 }
 
-CRITICAL FORMATTING RULES:
-1. THE "WHY": My UI/CSS is already programmed to automatically put a dash (-) on the screen.
-2. NO DASHES: Do NOT start any string with a dash (-), a double dash (--), a dot (.), or a space.
-   BAD: "- The variable is wrong"
-   GOOD: "The variable is wrong"
-3. RAW TEXT ONLY: Every sentence must start directly with a Capital Letter. Do not use any bullet point symbols or numbering.
-4. DETAIL: Provide long, deep, and helpful explanations. Do not be short.
-5. LANGUAGE: Use simple, professional English.
+INSTRUCTIONS FOR "GENIUS" MENTORING STYLE:
+1. **EXPERT FORMATTING (MANDATORY)**: Your \`fixed_code\` MUST be perfectly indented and structured. USE LITERAL ESCAPED NEWLINE CHARACTERS (\\n) FOR EVERY SINGLE LINE. Each function, brace, and statement MUST sit on its own line. NEVER return the code as a single-line string. If you squash the code, it's a failure.
+2. **POLYGLOT EXPERTISE**: Provide specific best practices for ${language || "the target ecosystem"} (e.g., Pythonic ways, C++ memory safety, or Java design patterns).
+3. **BE AN ENCOURAGING TEACHER**: Use a conversational, "Human" voice. Avoid boring phrases. Use: "Hey! Let me show you...", "Pro-tip...", "You're nearly there!".
+4. **THE "FROM ZERO" EXPLANATION**: Explain jargon in one simple sentence.
+5. **HIGHLIGHTED KEYWORDS**: You MUST use inline markdown backticks (\\\`like this\\\`) around technical concepts (like variables, functions, or jargon) to render them as highlighted UI badges.
+6. **THE "TL;DR" MENTOR START**: Start each item with a **bolded**, 1-sentence supportive summary.
+7. **REAL-WORLD ANALOGIES**: Use simple analogies for every lesson (e.g., comparing a variable to a "labeled box").
+8. **BEYOND BUG-FIXING**: Look for Architectural improvements and Performance tips.
+9. **DEEP TRACE (TEACHER EDITION)**: Walk the student through the code line-by-line.
+10. **NO GATEKEEPING**: Use simple, everyday English. No academic jargon.
+11. **OPTIONAL SYNTAX (ASI)**: Semicolons are not bugs. Mention them only in suggestions.
+12. **STRICT EMPTY STATE**: Leave \`issues\` and \`how_to_fix\` empty if code is bug-free.
 
-If you add a dash, it causes a "double dash" glitch in my UI. Only send the raw text sentences.
-
-${languageContext}Code to debug:
+${languageContext}Code from your student:
 ${buggyCode}
 `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-lite-preview",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            fixed_code: {
-              type: Type.STRING,
-              description: "The complete, corrected code.",
-            },
-            analysis: {
-              type: Type.OBJECT,
-              properties: {
-                issues: { type: Type.ARRAY, items: { type: Type.STRING } },
-                how_to_fix: { type: Type.ARRAY, items: { type: Type.STRING } },
-                suggestions: { type: Type.ARRAY, items: { type: Type.STRING } }
-              },
-              required: ["issues", "how_to_fix", "suggestions"]
-            }
-          },
-          required: ["fixed_code", "analysis"],
-        },
-        temperature: 0.2,
-      },
-    });
+    let text = "";
 
-    const text = response.text;
-    if (!text) throw new Error("Empty response from AI");
+    try {
+      // Attempt Groq first (Preferred for speed/JSON consistency)
+      const completion = await groq.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        messages: [
+          {
+            role: "system",
+            content: "You are a Polyglot Senior Mentor. You MUST provide beautifully formatted, multi-line code solutions using literal escaped newlines (\\n) for every line. NEVER return code on a single line."
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        temperature: 0,
+        response_format: { type: "json_object" },
+      });
+      text = completion.choices[0]?.message?.content;
+    } catch (groqError) {
+      console.error("Groq Error, falling back to Gemini:", groqError);
+      // Fallback to Gemini
+      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-lite" });
+      const result = await model.generateContent({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0,
+        },
+      });
+      const response = await result.response;
+      text = response.text();
+    }
+
+    if (!text) throw new Error("Empty response from AI providers");
 
     const result = JSON.parse(text);
 
+    // Safety check: If the code is correct, ensure Issues and How to Fix are truly empty
+    // This prevents conversational "No issues found" messages from appearing in the red box
+    if (result.analysis && result.analysis.issues) {
+      const containsNoIssuesMessage = result.analysis.issues.some(msg =>
+        msg.toLowerCase().includes("no issue") ||
+        msg.toLowerCase().includes("correct") ||
+        msg.toLowerCase().includes("already great")
+      );
+
+      if (containsNoIssuesMessage || result.analysis.issues.length === 0) {
+        result.analysis.issues = [];
+        result.analysis.how_to_fix = [];
+      }
+    }
+
     res.json(result);
+
   } catch (error) {
-    console.error("AI API Error:", error);
+    console.error("General AI API Error:", error);
     res.status(500).json({ error: error.message || "Failed to analyze code. Please try again." });
   }
 });
 
-app.use('/defixs-defix-v3-', express.static(path.join(__dirname, '../dist')));
-app.use(express.static(path.join(__dirname, '../dist')));
+// Static assets and SPA support
+const distPath = path.join(__dirname, '../dist');
+app.use(express.static(distPath));
 
-app.get('/defixs-defix-v3-/*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../dist/index.html'));
-});
-
+// Unified SPA Catch-all
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../dist/index.html'));
+  res.sendFile(path.join(distPath, 'index.html'));
 });
 
 app.listen(port, () => {

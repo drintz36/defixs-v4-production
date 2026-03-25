@@ -9,6 +9,7 @@ import { createTheme } from "@uiw/codemirror-themes";
 import { tags as t } from "@lezer/highlight";
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
+import { getHistory, saveToHistory, clearHistory, formatTimestamp, deleteHistoryItem } from './history';
 
 // --- Exact Original UIW Themes ---
 const darkTheme = {
@@ -44,7 +45,7 @@ else document.documentElement.classList.remove('dark');
 const activeTheme = isDark ? appDarkTheme : appLightTheme;
 
 // --- Language Selector Logic (Ported exactly from LanguageSelector.jsx) ---
-const LANGUAGES = ["Auto-Detect", "JavaScript", "TypeScript", "Python", "Java", "C++", "C#", "Go", "Rust", "PHP", "Ruby", "Swift", "Kotlin", "Dart", "HTML", "CSS", "SQL", "Bash", "Lua", "R", "Scala"];
+const LANGUAGES = ["JavaScript", "TypeScript", "Python", "Java", "C++", "C#", "Go", "Rust", "PHP", "Ruby", "Swift", "Kotlin", "Dart", "HTML", "CSS", "SQL", "Bash", "Lua", "R", "Scala"];
 let selectedLanguage = "";
 
 const dropdownBtn = document.getElementById('language-dropdown-btn');
@@ -76,10 +77,20 @@ function renderLanguages() {
     btn.addEventListener('click', (e) => {
       const lang = e.currentTarget.getAttribute('data-lang');
       selectedLanguage = lang;
-      selectedText.innerText = lang || "Auto-Detect";
+      selectedText.innerText = lang || "Language";
       renderLanguages();
       closeDropdown();
       updateEditorMode();
+
+      // Hide validation tooltip if it was showing
+      const validationTooltip = document.getElementById('language-validation-tooltip');
+      if (validationTooltip) validationTooltip.classList.add('hidden');
+
+      // Hide error banner if it was showing a language requirement
+      const errorBanner = document.getElementById('error-banner');
+      if (errorBanner && !errorBanner.classList.contains('hidden')) {
+        errorBanner.classList.add('hidden');
+      }
     });
   });
 }
@@ -93,20 +104,28 @@ function toggleDropdown() {
 function openDropdown() {
   dropdownMenu.classList.remove('hidden');
   dropdownArrow.classList.add('rotate-180');
+  updateAria(true);
 }
 
 function closeDropdown() {
   dropdownMenu.classList.add('hidden');
   dropdownArrow.classList.remove('rotate-180');
+  updateAria(false);
 }
 
 if (dropdownBtn) {
+  dropdownBtn.setAttribute('aria-haspopup', 'listbox');
+  dropdownBtn.setAttribute('aria-expanded', 'false');
   dropdownBtn.addEventListener('click', toggleDropdown);
   renderLanguages();
   document.addEventListener("mousedown", (e) => {
     const container = document.getElementById('language-dropdown-container');
     if (container && !container.contains(e.target)) closeDropdown();
   });
+}
+
+function updateAria(isOpen) {
+  if (dropdownBtn) dropdownBtn.setAttribute('aria-expanded', isOpen.toString());
 }
 
 function updateEditorMode() {
@@ -118,8 +137,10 @@ function updateEditorMode() {
 const updateListener = EditorView.updateListener.of((update) => {
   if (update.docChanged) {
     const hasText = update.state.doc.toString().trim().length > 0;
-    const btn = document.getElementById('btn-debug');
-    if (btn) btn.disabled = !hasText;
+    const btnDebug = document.getElementById('btn-debug');
+    const btnClear = document.getElementById('btn-clear');
+    if (btnDebug) btnDebug.disabled = !hasText;
+    if (btnClear) btnClear.disabled = !hasText;
   }
 });
 
@@ -290,6 +311,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initParticles();
   if (window.lucide) window.lucide.createIcons();
   if (window.AOS) window.AOS.init({ duration: 800, once: true, easing: 'ease-out-cubic' });
+  renderHistory();
 });
 
 const scrollToEditorBtn = document.getElementById('scroll-to-editor');
@@ -311,7 +333,7 @@ if (themeToggle) {
   themeToggle.addEventListener('click', () => {
     const isDarkNow = document.documentElement.classList.toggle('dark');
     localStorage.setItem('theme', isDarkNow ? 'dark' : 'light');
-    
+
     // Update CodeMirror themes
     const nextTheme = isDarkNow ? appDarkTheme : appLightTheme;
     inputEditor.dispatch({
@@ -320,7 +342,7 @@ if (themeToggle) {
     outputEditor.dispatch({
       effects: themeCompartment.reconfigure(nextTheme)
     });
-    
+
     // Refresh Lucide icons if any switch
     if (window.lucide) window.lucide.createIcons();
   });
@@ -329,29 +351,264 @@ if (themeToggle) {
 const btnDebug = document.getElementById('btn-debug');
 const btnDebugText = document.getElementById('btn-debug-text');
 const btnDebugIcon = document.getElementById('btn-debug-icon');
-  const errorBanner = document.getElementById('error-banner');
-  const errorMessage = document.getElementById('error-message');
-  const explanationContent = document.getElementById('explanation-content');
-  const explanationEmpty = document.getElementById('explanation-empty');
-  const orbitalLoader = document.getElementById('orbital-loader');
+const errorBanner = document.getElementById('error-banner');
+const errorMessage = document.getElementById('error-message');
+const explanationContent = document.getElementById('explanation-content');
+const explanationEmpty = document.getElementById('explanation-empty');
+const orbitalLoader = document.getElementById('orbital-loader');
+const historySidebar = document.getElementById('history-sidebar');
+const historyContainer = document.getElementById('history-container');
+const historyIndicator = document.getElementById('history-indicator');
+const openHistoryBtn = document.getElementById('open-history');
+const closeHistoryBtn = document.getElementById('close-history');
+const historyBackdrop = document.getElementById('history-backdrop');
 
-  btnDebug.addEventListener('click', async () => {
-    const code = inputEditor.state.doc.toString();
-    if (!code.trim()) return;
+function renderHistory() {
+  const history = getHistory();
 
-    // Set Loading UI State
-    btnDebug.disabled = true;
-    btnCopy.disabled = true;
-    btnDebugText.innerText = 'Debugging...';
-    btnDebugIcon.innerHTML = '<div class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>';
-    errorBanner.classList.add('hidden');
-
-    if (orbitalLoader) {
-      orbitalLoader.classList.remove('hidden');
-      orbitalLoader.classList.add('flex');
+  if (history.length > 0) {
+    openHistoryBtn.classList.remove('hidden');
+    historyIndicator.classList.remove('hidden');
+  } else {
+    historyIndicator.classList.add('hidden');
+    if (historySidebar && !historySidebar.classList.contains('translate-x-full')) {
+      toggleHistory();
     }
+  }
 
+  if (history.length === 0) {
+    historyContainer.innerHTML = `
+        <div class="flex flex-col items-center justify-center h-full text-center opacity-40 py-20">
+          <div class="w-16 h-16 rounded-full bg-gray-100 dark:bg-white/5 flex items-center justify-center mb-4">
+            <i data-lucide="clock" class="w-8 h-8"></i>
+          </div>
+          <p class="text-[13px] font-medium text-gray-400">Your history is empty</p>
+        </div>
+      `;
+    if (window.lucide) window.lucide.createIcons();
+    return;
+  }
+
+  historyContainer.innerHTML = history.map((item, index) => {
+    const previewTitle = item.buggyCode.substring(0, 120).replace(/[&<>"']/g, m => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[m]));
+
+    const delay = index < 10 ? `${index * 0.05}s` : '0s';
+
+    return `
+        <div 
+          class="history-card w-full flex flex-col group cursor-pointer animate-[fadeIn_0.5s_ease-out_both]"
+          data-id="${item.id}"
+          style="animation-delay: ${delay}"
+        >
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-[10px] text-[var(--color-primary-500)] dark:text-[var(--color-primary-400)] font-bold uppercase tracking-widest opacity-70">
+              ${formatTimestamp(item.timestamp)}
+            </span>
+            <button class="delete-history-btn p-1.5 rounded-lg opacity-40 hover:opacity-100 hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-500 transition-all" data-id="${item.id}">
+              <i data-lucide="x" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+          
+          <div class="relative overflow-hidden rounded-xl border border-[var(--color-primary-500)]/20 dark:border-[var(--color-primary-500)]/20 bg-white dark:bg-white/[0.03] shadow-sm group-hover:shadow-md group-hover:scale-[0.98] transition-all duration-300">
+             <div class="p-4 pr-16">
+                <pre class="text-[11.5px] font-mono text-gray-600 dark:text-gray-400 leading-relaxed truncate"><code>${previewTitle}${item.buggyCode.length > 80 ? '...' : ''}</code></pre>
+             </div>
+             
+             <!-- Restore Fixed Indicator -->
+             <div class="absolute bottom-3 right-4 flex items-center gap-1.5 text-[10px] font-bold text-[var(--color-primary-500)] transition-all duration-300">
+                <span>Restore</span>
+                <i data-lucide="corner-down-left" class="w-3 h-3"></i>
+             </div>
+          </div>
+        </div>
+      `;
+  }).join('');
+
+  document.querySelectorAll('.history-card').forEach(card => {
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.delete-history-btn')) return;
+      const id = card.getAttribute('data-id');
+      const item = getHistory().find(h => h.id === id);
+      if (item) restoreHistoryItem(item);
+    });
+  });
+
+  document.querySelectorAll('.delete-history-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteHistoryItem(btn.getAttribute('data-id'));
+      renderHistory();
+    });
+  });
+
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function toggleHistory() {
+  const isOpening = historySidebar.classList.contains('translate-x-full');
+  historySidebar.classList.toggle('translate-x-full');
+
+  if (isOpening) {
+    historyBackdrop.classList.remove('pointer-events-none');
+    historyBackdrop.classList.add('opacity-100');
+  } else {
+    historyBackdrop.classList.add('pointer-events-none');
+    historyBackdrop.classList.remove('opacity-100');
+  }
+}
+
+if (openHistoryBtn) openHistoryBtn.addEventListener('click', toggleHistory);
+if (closeHistoryBtn) closeHistoryBtn.addEventListener('click', toggleHistory);
+if (historyBackdrop) historyBackdrop.addEventListener('click', toggleHistory);
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !historySidebar.classList.contains('translate-x-full')) {
+    toggleHistory();
+  }
+});
+
+function restoreHistoryItem(item) {
+  inputEditor.dispatch({
+    changes: { from: 0, to: inputEditor.state.doc.length, insert: item.buggyCode }
+  });
+  lastGeneratedCode = item.fixedCode;
+  outputEditor.dispatch({
+    changes: { from: 0, to: outputEditor.state.doc.length, insert: item.fixedCode }
+  });
+  outputEmpty.classList.add('hidden');
+  outputEditorWrapper.classList.remove('hidden');
+  outputLoading.classList.add('hidden');
+
+  if (item.analysis) {
+    renderAnalysis(item.analysis);
     explanationEmpty.classList.add('hidden');
+    explanationContent.classList.remove('hidden');
+  }
+
+  // Scroll back to top
+  document.getElementById('code-editor-section').scrollIntoView({ behavior: 'smooth' });
+
+  // Auto-close sidebar on mobile or large screens too for focus
+  if (window.innerWidth < 1024) toggleHistory();
+}
+
+function renderAnalysis(analysis) {
+  const { issues, how_to_fix, suggestions } = analysis;
+
+  const renderSection = (title, items, type) => {
+    if (!items || items.length === 0) return '';
+
+    const themeMap = {
+      issues: {
+        color: 'text-red-500',
+        bg: 'bg-red-500/5',
+        border: 'border-red-500/20',
+        hover: 'hover:border-red-500/40',
+        icon: 'alert-circle',
+        itemIcon: 'circle-dot',
+        itemIconColor: 'text-red-500/60'
+      },
+      fix: {
+        color: 'text-green-500',
+        bg: 'bg-green-500/5',
+        border: 'border-green-500/20',
+        hover: 'hover:border-green-500/40',
+        icon: 'check-circle',
+        itemIcon: 'arrow-right-circle',
+        itemIconColor: 'text-green-500/60'
+      },
+      suggestions: {
+        color: 'text-blue-500',
+        bg: 'bg-blue-500/5',
+        border: 'border-blue-500/20',
+        hover: 'hover:border-blue-500/40',
+        icon: 'lightbulb',
+        itemIcon: 'zap',
+        itemIconColor: 'text-blue-500/60'
+      }
+    };
+
+    const theme = themeMap[type];
+
+    return `
+        <section class="flex flex-col gap-5 p-8 rounded-3xl ${theme.bg} border ${theme.border} ${theme.hover} transition-all duration-300 animate-[fadeIn_0.5s_ease-out_both] group">
+          <div class="flex items-center justify-between">
+            <h4 class="font-bold ${theme.color} text-[15px] uppercase tracking-[0.2em] flex items-center gap-2.5">
+              <i data-lucide="${theme.icon}" class="w-5 h-5"></i>
+              + ${title}
+            </h4>
+          </div>
+          <div class="space-y-4">
+            ${items.map((item, idx) => `
+              <div class="flex items-start gap-4 p-5 rounded-2xl bg-white dark:bg-black/20 border border-gray-100 dark:border-white/5 group-hover:border-white/10 transition-all duration-300">
+                 <div class="mt-1 ${theme.itemIconColor}">
+                    <i data-lucide="${theme.itemIcon}" class="w-4 h-4"></i>
+                 </div>
+                 <div class="prose prose-sm dark:prose-invert max-w-none text-gray-700 dark:text-gray-300 leading-relaxed font-medium">
+                    ${marked.parse(item)}
+                 </div>
+              </div>
+            `).join('')}
+          </div>
+        </section>
+      `;
+  };
+
+  const explanationHTML = `
+      <div class="flex flex-col gap-10 max-w-[1300px] mx-auto pb-10">
+        ${renderSection('Issues Detected', issues, 'issues')}
+        ${renderSection('How to Fix', how_to_fix, 'fix')}
+        ${renderSection('Suggestions & Tips', suggestions, 'suggestions')}
+      </div>
+    `;
+  explanationContent.innerHTML = DOMPurify.sanitize(explanationHTML);
+  if (window.lucide) window.lucide.createIcons();
+}
+
+const btnClearHistory = document.getElementById('btn-clear-history');
+if (btnClearHistory) {
+  btnClearHistory.addEventListener('click', () => {
+    clearHistory();
+    renderHistory();
+  });
+}
+
+btnDebug.addEventListener('click', async () => {
+  const code = inputEditor.state.doc.toString();
+  if (!code.trim()) return;
+
+  if (!selectedLanguage) {
+    // Show the validation tooltip with a bounce
+    const validationTooltip = document.getElementById('language-validation-tooltip');
+    if (validationTooltip) validationTooltip.classList.remove('hidden');
+
+    dropdownBtn.classList.add('ring-2', 'ring-red-500');
+    setTimeout(() => {
+      dropdownBtn.classList.remove('ring-2', 'ring-red-500');
+      if (validationTooltip) validationTooltip.classList.add('hidden');
+    }, 3000);
+    return;
+  }
+
+  // Reset error text if previously changed
+  const errorTitle = document.getElementById('error-title');
+  if (errorTitle) errorTitle.innerText = 'Action Required';
+
+  // Set Loading UI State
+  btnDebug.disabled = true;
+  btnCopy.disabled = true;
+  btnDebugText.innerText = 'Debugging...';
+  btnDebugIcon.innerHTML = '<div class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>';
+  errorBanner.classList.add('hidden');
+
+  if (orbitalLoader) {
+    orbitalLoader.classList.remove('hidden');
+    orbitalLoader.classList.add('flex');
+  }
+
+  explanationEmpty.classList.add('hidden');
   explanationContent.classList.remove('hidden');
   explanationContent.innerHTML = `
     <div class="h-full flex flex-col gap-4 animate-pulse">
@@ -404,34 +661,19 @@ const btnDebugIcon = document.getElementById('btn-debug-icon');
     outputEditorWrapper.classList.remove('hidden');
 
     if (data.analysis) {
-      const { issues, how_to_fix, suggestions } = data.analysis;
-      const createList = (items) => items && items.length > 0
-        ? `<ul class="list-none pl-4 space-y-2 text-[14px] text-gray-700 dark:text-gray-300 mt-3 mb-1">
-            ${items.map(item => `<li>- ${item}</li>`).join('')}
-           </ul>`
-        : '<p class="text-[14px] text-gray-500 mt-2 mb-1">None.</p>';
-
-      explanationContent.innerHTML = `
-        <div class="flex flex-col gap-6 font-sans">
-          <div>
-            <h4 class="font-semibold text-[#2255aa] text-[15px]">+ Issues:</h4>
-            ${createList(issues)}
-          </div>
-          <div class="w-full h-[1px] bg-[#eaecf0] dark:bg-white/10"></div>
-          <div>
-            <h4 class="font-semibold text-[#2255aa] text-[15px]">+ How to fix:</h4>
-            ${createList(how_to_fix)}
-          </div>
-          <div class="w-full h-[1px] bg-[#eaecf0] dark:bg-white/10"></div>
-          <div>
-            <h4 class="font-semibold text-[#2255aa] text-[15px]">+ Improvement and Suggestion ( tips to avoid the same mistakes ):</h4>
-            ${createList(suggestions)}
-          </div>
-        </div>
-      `;
+      renderAnalysis(data.analysis);
     } else {
       explanationContent.innerHTML = '<p>No analysis provided.</p>';
     }
+
+    // Save to History
+    saveToHistory({
+      language: selectedLanguage || "Auto-Detect",
+      buggyCode: code,
+      fixedCode: data.fixed_code,
+      analysis: data.analysis
+    });
+    renderHistory();
   } catch (err) {
     errorBanner.classList.remove('hidden');
     errorMessage.innerText = err.message;
@@ -455,3 +697,33 @@ const btnDebugIcon = document.getElementById('btn-debug-icon');
     }
   }
 });
+
+const btnClear = document.getElementById('btn-clear');
+if (btnClear) {
+  btnClear.addEventListener('click', () => {
+    // 1. Clear Input Editor
+    inputEditor.dispatch({
+      changes: { from: 0, to: inputEditor.state.doc.length, insert: "" }
+    });
+
+    // 2. Clear Output Editor
+    outputEditor.dispatch({
+      changes: { from: 0, to: outputEditor.state.doc.length, insert: "" }
+    });
+    outputEmpty.classList.remove('hidden');
+    outputEditorWrapper.classList.add('hidden');
+    lastGeneratedCode = "";
+
+    // 3. Clear Analysis Report
+    explanationContent.innerHTML = "";
+    explanationContent.classList.add('hidden');
+    explanationEmpty.classList.remove('hidden');
+
+    // Reset UI states
+    errorBanner.classList.add('hidden');
+    errorMessage.innerText = "";
+
+    // Refresh icons
+    if (window.lucide) window.lucide.createIcons();
+  });
+}
