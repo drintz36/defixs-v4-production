@@ -3,7 +3,7 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [tailwindcss()],
-  base: "/defixs-v4-production/",
+  base: "/",
   server: {
     proxy: {
       '/api': 'http://localhost:3000'
