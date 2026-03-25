@@ -688,7 +688,7 @@ btnDebug.addEventListener('click', async () => {
     btnDebug.disabled = false;
     btnCopy.disabled = false;
     btnDebugText.innerText = 'Debug Code';
-    btnDebugIcon.innerHTML = '<i data-lucide="play" class="w-4 h-4 fill-current"></i>';
+    btnDebugIcon.innerHTML = '<i data-lucide="zap" class="w-4 h-4 fill-current"></i>';
     if (window.lucide) window.lucide.createIcons();
 
     if (orbitalLoader) {
