@@ -15,7 +15,66 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
+
+// --- How long to wait for an AI response before giving up (ms) ---
+// Render free tier kills connections after 30s, so we bail at 25s gracefully.
+const REQUEST_TIMEOUT_MS = 25000;
+
+// --- Friendly error sanitizer: never expose raw API JSON to the user ---
+function sanitizeAIError(err) {
+  const msg = (err?.message || err?.toString() || '').toLowerCase();
+  const status = err?.status || err?.statusCode || 0;
+
+  if (status === 429 || msg.includes('quota') || msg.includes('rate limit') || msg.includes('resource_exhausted')) {
+    return 'Our AI is a bit busy right now (rate limit reached). Please wait a moment and try again!';
+  }
+  if (status === 503 || msg.includes('unavailable') || msg.includes('service_unavailable')) {
+    return 'The AI service is temporarily unavailable. Please try again in a few seconds.';
+  }
+  if (msg.includes('timeout') || msg.includes('timed out') || msg.includes('deadline') || msg.includes('took too long')) {
+    return 'The AI took too long to respond. Your code may be very large — try again, or paste only the specific function that has the bug.';
+  }
+  if (msg.includes('invalid api key') || msg.includes('api_key_invalid')) {
+    return 'There is a configuration issue with the AI API key. Please contact the site admin.';
+  }
+  // Generic fallback — never expose raw JSON
+  return 'The AI could not analyze the code right now. Please try again in a moment.';
+}
+
+// --- Wrap any async call with a timeout to prevent hanging connections ---
+function withTimeout(promise, ms, label) {
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`AI took too long to respond (${label})`)), ms)
+  );
+  return Promise.race([promise, timeout]);
+}
+
+// --- Safe JSON parser: handles truncated or malformed AI output ---
+function safeParseJSON(text) {
+  // Attempt 1: standard parse
+  try {
+    return JSON.parse(text);
+  } catch (_) {}
+
+  // Attempt 2: extract the first {...} block (strips leading/trailing junk)
+  const match = text.match(/\{[\s\S]*\}/);
+  if (match) {
+    try {
+      return JSON.parse(match[0]);
+    } catch (_) {}
+  }
+
+  // Attempt 3: safe fallback object so the UI still shows something useful
+  return {
+    fixed_code: '// The AI response was too large or malformed to parse fully.\n// Please try again, or split your code into smaller sections.',
+    analysis: {
+      issues: ['**Heads up!** The AI response was too large to process fully. This can happen with very big files.'],
+      how_to_fix: ['Try pasting only the specific function or module that contains the bug, not the entire file. This gives the AI a focused target and gets you faster, more accurate results!'],
+      suggestions: ['**Pro-tip:** For large projects, debug section by section — paste one class or function at a time for the best experience.']
+    }
+  };
+}
 
 // Initialize AI Clients
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
@@ -29,7 +88,18 @@ app.post('/api/debug', async (req, res) => {
       return res.status(400).json({ error: 'Missing buggyCode in request body' });
     }
 
+    const lineCount = buggyCode.split('\n').length;
+    const isLargeFile = lineCount >= 500;
+
     const languageContext = language ? `The code is written in ${language}.\n` : '';
+
+    // For large files: smarter prompt so the AI doesn't overflow its output token limit
+    const largeFileNote = isLargeFile
+      ? `\nIMPORTANT — LARGE FILE MODE (${lineCount} lines detected):
+- In \`fixed_code\`: Return ONLY the corrected blocks/functions that contain bugs. For unchanged sections, use a comment like: // ... (rest of code unchanged)
+- In \`issues\` / \`how_to_fix\`: Focus on the TOP 5 most impactful bugs only. Skip minor style issues.\n`
+      : '';
+
     const prompt = `Act as a warm, legendary Polyglot Senior Developer and Mentor with 10+ years of experience. You are a world-class expert in ${language || "countless programming languages"}.
 Your mission is to guide a junior student ("from absolute zero") by providing **Premium Code Analysis** that is both deeply technical and incredibly simple to understand.
 
@@ -63,7 +133,7 @@ INSTRUCTIONS FOR "GENIUS" MENTORING STYLE:
     - \`how_to_fix\`: []
     - \`suggestions\`: ["I am a Specialized Debugger. I transform broken code into working code. Try pasting some \`JavaScript\`, \`Python\`, or other supported languages!"]
 13. **STRICT EMPTY STATE**: Leave \`issues\` and \`how_to_fix\` empty if code is bug-free.
-
+${largeFileNote}
 ${languageContext}Code from your student:
 ${buggyCode}
 `;
@@ -72,7 +142,7 @@ ${buggyCode}
 
     try {
       // Attempt Groq first (Preferred for speed/JSON consistency)
-      const completion = await groq.chat.completions.create({
+      const groqPromise = groq.chat.completions.create({
         model: "llama-3.3-70b-versatile",
         messages: [
           {
@@ -85,29 +155,37 @@ ${buggyCode}
           }
         ],
         temperature: 0,
+        max_tokens: 32000,
         response_format: { type: "json_object" },
       });
+      const completion = await withTimeout(groqPromise, REQUEST_TIMEOUT_MS, 'Groq');
       text = completion.choices[0]?.message?.content;
     } catch (groqError) {
-      console.error("Groq Error, falling back to Gemini:", groqError);
-      // Fallback to Gemini
-      const result = await genAI.models.generateContent({
-        model: "gemini-2.0-flash-lite",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          temperature: 0,
-        },
-      });
-      text = result.text;
+      console.error("Groq Error, falling back to Gemini:", groqError.message || groqError);
+      try {
+        // Fallback to Gemini
+        const geminiPromise = genAI.models.generateContent({
+          model: "gemini-2.0-flash-lite",
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+            temperature: 0,
+          },
+        });
+        const result = await withTimeout(geminiPromise, REQUEST_TIMEOUT_MS, 'Gemini');
+        text = result.text;
+      } catch (geminiError) {
+        console.error("Gemini fallback also failed:", geminiError.message || geminiError);
+        throw new Error(sanitizeAIError(geminiError));
+      }
     }
 
     if (!text) throw new Error("Empty response from AI providers");
 
-    const result = JSON.parse(text);
+    // Safe parse — never crash on malformed/truncated AI JSON (common with large code)
+    const result = safeParseJSON(text);
 
-    // Safety check: If the code is correct, ensure Issues and How to Fix are truly empty
-    // This prevents conversational "No issues found" messages from appearing in the red box
+    // Safety check: ensure "no issues found" messages don't appear in the red issues box
     if (result.analysis && result.analysis.issues) {
       const containsNoIssuesMessage = result.analysis.issues.some(msg =>
         msg.toLowerCase().includes("no issue") ||
@@ -124,8 +202,9 @@ ${buggyCode}
     res.json(result);
 
   } catch (error) {
-    console.error("General AI API Error:", error);
-    res.status(500).json({ error: error.message || "Failed to analyze code. Please try again." });
+    console.error("General AI API Error:", error.message || error);
+    const friendlyMessage = sanitizeAIError(error);
+    res.status(500).json({ error: friendlyMessage });
   }
 });
 

@@ -136,11 +136,34 @@ function updateEditorMode() {
 // --- Editor Configuration ---
 const updateListener = EditorView.updateListener.of((update) => {
   if (update.docChanged) {
-    const hasText = update.state.doc.toString().trim().length > 0;
+    const content = update.state.doc.toString();
+    const hasText = content.trim().length > 0;
     const btnDebug = document.getElementById('btn-debug');
     const btnClear = document.getElementById('btn-clear');
     if (btnDebug) btnDebug.disabled = !hasText;
     if (btnClear) btnClear.disabled = !hasText;
+
+    // Live line counter + large-file warning
+    const lineCounter = document.getElementById('line-counter');
+    const largeCodeWarning = document.getElementById('large-code-warning');
+    const lineCount = update.state.doc.lines;
+    if (lineCounter) {
+      if (hasText) {
+        lineCounter.classList.remove('hidden');
+        lineCounter.textContent = `${lineCount} line${lineCount !== 1 ? 's' : ''}`;
+      } else {
+        lineCounter.classList.add('hidden');
+      }
+    }
+    if (largeCodeWarning) {
+      if (lineCount >= 500 && hasText) {
+        largeCodeWarning.classList.remove('hidden');
+        largeCodeWarning.classList.add('inline-flex');
+      } else {
+        largeCodeWarning.classList.add('hidden');
+        largeCodeWarning.classList.remove('inline-flex');
+      }
+    }
   }
 });
 
@@ -675,8 +698,14 @@ btnDebug.addEventListener('click', async () => {
     });
     renderHistory();
   } catch (err) {
+    // Sanitize: never show raw JSON objects or API error blobs to the user
+    let displayMessage = err.message || 'Something went wrong. Please try again.';
+    // If the message looks like raw JSON or is absurdly long, replace it
+    if (displayMessage.startsWith('{') || displayMessage.startsWith('[') || displayMessage.length > 200) {
+      displayMessage = 'The AI could not analyze your code right now. Please try again in a moment.';
+    }
     errorBanner.classList.remove('hidden');
-    errorMessage.innerText = err.message;
+    errorMessage.innerText = displayMessage;
     explanationContent.innerHTML = '';
     explanationEmpty.classList.remove('hidden');
     explanationContent.classList.add('hidden');
