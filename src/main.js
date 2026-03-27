@@ -464,7 +464,7 @@ if (closeHistoryBtn) closeHistoryBtn.addEventListener('click', toggleHistory);
 if (historyBackdrop) historyBackdrop.addEventListener('click', toggleHistory);
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !historySidebar.classList.contains('translate-x-full')) {
+  if (e.key === 'Escape' && historySidebar && !historySidebar.classList.contains('translate-x-full')) {
     toggleHistory();
   }
 });

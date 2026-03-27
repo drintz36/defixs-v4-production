@@ -19,7 +19,7 @@ app.use(express.json());
 
 // Initialize AI Clients
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const genAI = new GoogleGenAI(process.env.GEMINI_API_KEY);
+const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 app.post('/api/debug', async (req, res) => {
   try {
@@ -91,16 +91,15 @@ ${buggyCode}
     } catch (groqError) {
       console.error("Groq Error, falling back to Gemini:", groqError);
       // Fallback to Gemini
-      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-lite" });
-      const result = await model.generateContent({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: {
+      const result = await genAI.models.generateContent({
+        model: "gemini-2.0-flash-lite",
+        contents: prompt,
+        config: {
           responseMimeType: "application/json",
           temperature: 0,
         },
       });
-      const response = await result.response;
-      text = response.text();
+      text = result.text;
     }
 
     if (!text) throw new Error("Empty response from AI providers");
